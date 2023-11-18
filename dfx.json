@@ -1,0 +1,13 @@
+{
+    "canisters": {
+        "fund_it": {
+            "type": "custom",
+            "build": "npx azle fund_it",
+            "root": "src",
+            "ts": "src/index.ts",
+            "candid": "src/index.did",
+            "wasm": ".azle/fund_it/fund_it.wasm.gz"
+        }
+    }
+}
+
