@@ -36,8 +36,8 @@ export function createCampaign(
   _deadline: number
 ): Result<Campaign, string> {
   try {
-    if (!_proposer) {
-      return Result.Err<Campaign, string>("Proposer is required");
+    if (!_proposer || typeof _proposer !== "string") {
+      return Result.Err<Campaign, string>("Invalid proposer");
     }
     if (!_title || _title.trim().length === 0) {
       return Result.Err<Campaign, string>("Title is required");
@@ -48,12 +48,6 @@ export function createCampaign(
     if (!_goal || _goal <= 0) {
       return Result.Err<Campaign, string>("Goal should be greater than 0");
     }
-
-    // const endDate = new Date();
-    // endDate.setDate(endDate.getDate() + _deadline);
-    //   getDate: Query([text], nat32, (isoString) => {
-    //     return new Date(isoString).getDate();
-    // }),
 
     const presentTime = Number(ic.time());
     const nanoSeconds = Number(_deadline * 86400 * 1_000_000_000);
@@ -72,16 +66,8 @@ export function createCampaign(
 
     campaignStorage.insert(campaign.id, campaign);
     return Result.Ok(campaign);
-  } catch (err) {
-    if (err instanceof Error) {
-      return Result.Err<Campaign, string>(
-        `Failed to create campaign: ${err.message}`
-      );
-    } else {
-      return Result.Err<Campaign, string>(
-        "Failed to create campaign: Unexpected error, Please try again later"
-      );
-    }
+  } catch (error) {
+    return Result.Err<Campaign, string>(`Failed to create campaign: ${error}`);
   }
 }
 
@@ -99,18 +85,24 @@ export function updateOnlyTitleandDescription(
   _title: string,
   _description: string
 ): Result<Campaign, string> {
-  return match(campaignStorage.get(_campaignId), {
-    Some: (campaign) => {
-      campaign.title = _title;
-      campaign.description = _description;
-      campaignStorage.insert(_campaignId, campaign);
-      return Result.Ok<Campaign, string>(campaign);
-    },
-    None: () =>
-      Result.Err<Campaign, string>(
-        `the campaign with id=${_campaignId} is not found`
-      ),
-  });
+  try {
+    return match(campaignStorage.get(_campaignId), {
+      Some: (existingCampaign) => {
+        existingCampaign.title = _title;
+        existingCampaign.description = _description;
+        campaignStorage.insert(_campaignId, existingCampaign);
+        return Result.Ok<Campaign, string>(existingCampaign);
+      },
+      None: () =>
+        Result.Err<Campaign, string>(
+          `The campaign with id=${_campaignId} is not found`
+        ),
+    });
+  } catch (error) {
+    return Result.Err<Campaign, string>(
+      `Failed to update campaign: ${error instanceof Error ? error.message : 'Unexpected error'}`
+    );
+  }
 }
 
 /**
@@ -121,8 +113,8 @@ export function updateOnlyTitleandDescription(
  * @param _amount - The amount to donate.
  * @returns A result object containing the updated campaign or an error string.
  *
- * If the campaign passes the deadline then it will give an Campaign has ended error,
- * if goal is crossed then it will give the maximum goal crossed error.
+ * If the campaign passes the deadline then it will give a Campaign has ended error,
+ * if the goal is crossed then it will give the maximum goal crossed error.
  */
 $update;
 export function donateCampaign(
@@ -130,33 +122,38 @@ export function donateCampaign(
   _donorId: Principal,
   _amount: number
 ): Result<Campaign, string> {
-  return match(campaignStorage.get(_campaignId), {
-    Some: (campaign) => {
-      if (Number(ic.time()) > Number(campaign.deadline)) {
-        return Result.Err<Campaign, string>("This campaign has ended");
-      }
-      const newDonor: Donor = { id: _donorId, amount: _amount };
-      campaign.donors.push(newDonor);
-      if (campaign.goal >= campaign.totalDonations + _amount) {
-        campaign.totalDonations += _amount;
-      } else {
-        return Result.Err<Campaign, string>(
-          `Donation amount is greater than the goal`
-        );
-      }
-      campaignStorage.insert(_campaignId, campaign);
-      return Result.Ok<Campaign, string>(campaign);
-    },
-    None: () =>
-      Result.Err<Campaign, string>(
-        `the campaign with id=${_campaignId} is not found`
-      ),
-  });
-}
+  try {
+    return match(campaignStorage.get(_campaignId), {
+      Some: (existingCampaign) => {
+        if (Number(ic.time()) > Number(existingCampaign.deadline)) {
+          return Result.Err<Campaign, string>("This campaign has ended");
+        }
 
-/*
-getCampaign: Gets the campaign by taking the campaignId as input,
-*/
+        const newDonor: Donor = { id: _donorId, amount: _amount };
+        existingCampaign.donors.push(newDonor);
+
+        if (existingCampaign.goal >= existingCampaign.totalDonations + _amount) {
+          existingCampaign.totalDonations += _amount;
+        } else {
+          return Result.Err<Campaign, string>(
+            `Donation amount is greater than the goal`
+          );
+        }
+
+        campaignStorage.insert(_campaignId, existingCampaign);
+        return Result.Ok<Campaign, string>(existingCampaign);
+      },
+      None: () =>
+        Result.Err<Campaign, string>(
+          `The campaign with id=${_campaignId} is not found`
+        ),
+    });
+  } catch (error) {
+    return Result.Err<Campaign, string>(
+      `Failed to donate to campaign: ${error instanceof Error ? error.message : 'Unexpected error'}`
+    );
+  }
+}
 /**
  * Gets a campaign by its ID.
  *
@@ -165,13 +162,21 @@ getCampaign: Gets the campaign by taking the campaignId as input,
  */
 $query;
 export function getCampaign(id: string): Result<Campaign, string> {
-  return match(campaignStorage.get(id), {
-    Some: (campaign) => Result.Ok<Campaign, string>(campaign),
-    None: () =>
-      Result.Err<Campaign, string>(`the campaign with id=${id} is not found`),
-  });
-}
+  try {
+    if (!id || typeof id !== "string" || !/^[a-f\d]{5}$/.test(id)) {
+      return Result.Err<Campaign, string>("Invalid campaign ID");
+    }
 
+    return match(campaignStorage.get(id), {
+      Some: (existingCampaign) => Result.Ok<Campaign, string>(existingCampaign),
+      None: () => Result.Err<Campaign, string>(`The campaign with id=${id} is not found`),
+    });
+  } catch (error) {
+    return Result.Err<Campaign, string>(
+      `Failed to get campaign: ${error instanceof Error ? error.message : 'Unexpected error'}`
+    );
+  }
+}
 /**
  * Gets the deadline of a campaign by its ID.
  *
@@ -180,10 +185,20 @@ export function getCampaign(id: string): Result<Campaign, string> {
  */
 $query;
 export function getDeadlineByCampaignId(id: string): Result<number, string> {
-  return match(campaignStorage.get(id), {
-    Some: (campaign) => Result.Ok<number, string>(campaign.deadline),
-    None: () => Result.Err<number, string>("bhvbsdkv")
-  });
+  try {
+    if (!id || typeof id !== "string" || !/^[a-f\d]{5}$/.test(id)) {
+      return Result.Err<number, string>("Invalid campaign ID");
+    }
+
+    return match(campaignStorage.get(id), {
+      Some: (existingCampaign) => Result.Ok<number, string>(existingCampaign.deadline),
+      None: () => Result.Err<number, string>("Campaign not found"),
+    });
+  } catch (error) {
+    return Result.Err<number, string>(
+      `Failed to get campaign deadline: ${error instanceof Error ? error.message : 'Unexpected error'}`
+    );
+  }
 }
 
 /**
@@ -194,9 +209,16 @@ export function getDeadlineByCampaignId(id: string): Result<number, string> {
  */
 $update;
 export function deleteCampaign(id: string): Result<Campaign, string> {
-  return match(campaignStorage.remove(id), {
-    Some: (deletedCampaign) => Result.Ok<Campaign, string>(deletedCampaign),
-    None: () =>
-      Result.Err<Campaign, string>(`the campaign with id=${id} is not found`),
-  });
+  try {
+    if (!id || typeof id !== "string" || !/^[a-f\d]{5}$/.test(id)) {
+      return Result.Err<Campaign, string>("Invalid campaign ID");
+    }
+
+    return match(campaignStorage.remove(id), {
+      Some: (deletedCampaign) => Result.Ok<Campaign, string>(deletedCampaign),
+      None: () => Result.Err<Campaign, string>(`The campaign with id=${id} is not found`),
+    });
+  } catch (error) {
+    return Result.Err<Campaign, string>(`Failed to delete campaign: ${error instanceof Error ? error.message : 'Unexpected error'}`);
+  }
 }
